@@ -672,10 +672,8 @@ class SMTP
                         return false;
                     }
                     //If the server answers with 334, send an empty line and wait for a 235
-                    if (
-                        substr($this->last_reply, 0, 3) === '334'
-                        && $this->sendCommand('AUTH End', '', 235)
-                    ) {
+                    if (substr($this->last_reply, 0, 3) === '334') {
+                        $this->sendCommand('AUTH End', '', 235);
                         return false;
                     }
                 }
@@ -1243,7 +1241,7 @@ class SMTP
         //it can leak credentials, so hide credentials in all but lowest level
         if (
             self::DEBUG_LOWLEVEL > $this->do_debug &&
-            in_array($command, ['User & Password', 'Username', 'Password'], true)
+            in_array($command, ['User & Password', 'Username', 'Password', 'AUTH', 'OAuth TOKEN'], true)
         ) {
             $this->edebug('CLIENT -> SERVER: [credentials hidden]', self::DEBUG_CLIENT);
         } else {
