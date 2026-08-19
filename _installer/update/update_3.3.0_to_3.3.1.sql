@@ -113,4 +113,10 @@ ON DUPLICATE KEY UPDATE
   `status` = VALUES(`status`),
   `edit` = VALUES(`edit`);
 
+#GTB - 2026-08-17 - backfill orders.languages_id for orders placed before this column existed (added 2014-01-05, never backfilled), so order::getOrderData() can read it directly
+UPDATE `orders` AS o
+JOIN `languages` AS l ON l.`directory` = o.`language`
+SET o.`languages_id` = l.`languages_id`
+WHERE o.`languages_id` = 0;
+
 # Keep an empty line at the end of this file for the db_updater to work properly
