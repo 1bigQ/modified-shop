@@ -948,13 +948,59 @@ class PayoneModified {
 		$this->processDeferredTransactionStatus($orders_id, $txid);
 	}
 
+	// one statement, so the transaction status, its latest applied callback and any unfinished
+	// callback come from the same read and a callback running in parallel cannot mix them up
 	public function isTransactionApprovedForCheckout($orders_id) {
 		$approved_status = array('APPROVED', 'APPOINTED', 'CAPTURE', 'PAID');
-		$latest_transaction_status = $this->getLatestAppliedTransactionStatusByTxid($orders_id);
 
-		$query = xtc_db_query("SELECT status, txid
-		                         FROM payone_transactions
-		                        WHERE orders_id = '".(int)$orders_id."'");
+		$query = xtc_db_query("SELECT t.status,
+		                              (SELECT d.`value`
+		                                 FROM payone_txstatus_data d
+		                                WHERE d.`key` = 'transaction_status'
+		                                  AND d.payone_txstatus_id = (SELECT MAX(x.payone_txstatus_id)
+		                                                                FROM payone_txstatus x
+		                                                                JOIN payone_txstatus_data x_txid
+		                                                                  ON x_txid.payone_txstatus_id = x.payone_txstatus_id
+		                                                                 AND x_txid.`key` = 'txid'
+		                                                           LEFT JOIN payone_txstatus_data x_applied
+		                                                                  ON x_applied.payone_txstatus_id = x.payone_txstatus_id
+		                                                                 AND x_applied.`key` = '_modified_applied'
+		                                                           LEFT JOIN payone_txstatus_data x_processed
+		                                                                  ON x_processed.payone_txstatus_id = x.payone_txstatus_id
+		                                                                 AND x_processed.`key` = '_modified_processed'
+		                                                               WHERE x.orders_id = t.orders_id
+		                                                                 AND x_txid.`value` = t.txid
+		                                                                 AND (x_applied.`value` = '1'
+		                                                                      OR (x_applied.payone_txstatus_data_id IS NULL
+		                                                                          AND (x_processed.`value` = '1'
+		                                                                               OR x_processed.payone_txstatus_data_id IS NULL))))
+		                              ) AS transaction_status,
+		                              (SELECT COUNT(*)
+		                                 FROM payone_txstatus u
+		                                 JOIN payone_txstatus_data u_txid
+		                                   ON u_txid.payone_txstatus_id = u.payone_txstatus_id
+		                                  AND u_txid.`key` = 'txid'
+		                                 JOIN payone_txstatus_data u_sequence
+		                                   ON u_sequence.payone_txstatus_id = u.payone_txstatus_id
+		                                  AND u_sequence.`key` = 'sequencenumber'
+		                            LEFT JOIN payone_txstatus_data u_applied
+		                                   ON u_applied.payone_txstatus_id = u.payone_txstatus_id
+		                                  AND u_applied.`key` = '_modified_applied'
+		                            LEFT JOIN payone_txstatus_data u_processed
+		                                   ON u_processed.payone_txstatus_id = u.payone_txstatus_id
+		                                  AND u_processed.`key` = '_modified_processed'
+		                                WHERE u.orders_id = t.orders_id
+		                                  AND u_txid.`value` = t.txid
+		                                  AND ((u_applied.payone_txstatus_data_id IS NOT NULL
+		                                        AND u_applied.`value` != '1')
+		                                       OR (u_applied.payone_txstatus_data_id IS NULL
+		                                           AND u_processed.payone_txstatus_data_id IS NOT NULL
+		                                           AND u_processed.`value` != '1'))
+		                                  AND (u_processed.payone_txstatus_data_id IS NULL
+		                                       OR u_processed.`value` != '1')
+		                              ) AS unfinished
+		                         FROM payone_transactions t
+		                        WHERE t.orders_id = '".(int)$orders_id."'");
 		while ($transaction = xtc_db_fetch_array($query)) {
 			$status = strtoupper((string)$transaction['status']);
 			if (!in_array($status, $approved_status, true)) {
@@ -963,9 +1009,12 @@ class PayoneModified {
 			if ($status === 'APPROVED') {
 				return true;
 			}
-			$txid = (string)$transaction['txid'];
-			if (!isset($latest_transaction_status[$txid]['transaction_status'])
-			    || strtolower((string)$latest_transaction_status[$txid]['transaction_status']) !== 'pending'
+			// a callback that could not be applied completely may have left this status behind
+			if ((int)$transaction['unfinished'] > 0) {
+				continue;
+			}
+			if ($transaction['transaction_status'] === null
+			    || strtolower((string)$transaction['transaction_status']) !== 'pending'
 			    )
 			{
 				return true;
@@ -1106,54 +1155,64 @@ class PayoneModified {
 	}
 
 	protected function storeTransactionStatus($txstatus, $credential_hash) {
-		if (xtc_db_query('START TRANSACTION') === false) {
-			return false;
-		}
-
 		$sql_data_status_array = array(
 			'orders_id' => (int)$txstatus['reference'],
 			'received' => 'now()',
 		);
 		if (xtc_db_perform('payone_txstatus', $sql_data_status_array) === false) {
-			xtc_db_query('ROLLBACK');
 			return false;
 		}
-		$txstatus_id = xtc_db_insert_id();
-		if ((int)$txstatus_id <= 0) {
-			xtc_db_query('ROLLBACK');
+		$txstatus_id = (int)xtc_db_insert_id();
+		if ($txstatus_id <= 0) {
 			return false;
 		}
 
+		// the markers go in first, a half written status must never count as applied
+		$txstatus_data = array(
+			'_modified_credential_hash' => $credential_hash,
+			'_modified_event_hash' => $this->getTransactionStatusEventHash($txstatus),
+			'_modified_processed' => '0',
+			'_modified_applied' => '0',
+		);
+		$queue_data = array();
 		foreach($txstatus as $key => $value) {
 			if ($key === 'key' || strpos($key, '_modified_') === 0) {
 				continue;
 			}
 			$value = ((is_array($value)) ? implode('||', $value) : $value);
-			$result = xtc_db_query("INSERT INTO payone_txstatus_data (payone_txstatus_id, `key`, `value`)
-			                        VALUES ('".(int)$txstatus_id."', '".xtc_db_input($key)."', '".xtc_db_input($value)."')");
-			if ($result === false) {
-				xtc_db_query('ROLLBACK');
-				return false;
+			// txid and sequencenumber hand the status to the processing queue, so they go in last
+			if ($key === 'txid' || $key === 'sequencenumber') {
+				$queue_data[$key] = $value;
+				continue;
+			}
+			$txstatus_data[$key] = $value;
+		}
+		// the request order does not matter here, the queue needs the sequence number before the txid
+		foreach(array('sequencenumber', 'txid') as $key) {
+			if (isset($queue_data[$key])) {
+				$txstatus_data[$key] = $queue_data[$key];
 			}
 		}
-		foreach(array(
-			'_modified_credential_hash' => $credential_hash,
-			'_modified_event_hash' => $this->getTransactionStatusEventHash($txstatus),
-			'_modified_processed' => '0',
-			'_modified_applied' => '0',
-		) as $key => $value) {
+
+		foreach($txstatus_data as $key => $value) {
 			$result = xtc_db_query("INSERT INTO payone_txstatus_data (payone_txstatus_id, `key`, `value`)
-			                        VALUES ('".(int)$txstatus_id."', '".xtc_db_input($key)."', '".xtc_db_input($value)."')");
+			                        VALUES ('".$txstatus_id."', '".xtc_db_input($key)."', '".xtc_db_input($value)."')");
 			if ($result === false) {
-				xtc_db_query('ROLLBACK');
+				$this->deleteTransactionStatus($txstatus_id);
 				return false;
 			}
-		}
-		if (xtc_db_query('COMMIT') === false) {
-			xtc_db_query('ROLLBACK');
-			return false;
 		}
 		return $txstatus_id;
+	}
+
+	// there is no rollback, so a status that could not be written completely is removed again
+	protected function deleteTransactionStatus($txstatus_id) {
+		$txstatus_id = (int)$txstatus_id;
+		if ($txstatus_id <= 0) {
+			return;
+		}
+		xtc_db_query("DELETE FROM payone_txstatus_data WHERE payone_txstatus_id = '".$txstatus_id."'");
+		xtc_db_query("DELETE FROM payone_txstatus WHERE payone_txstatus_id = '".$txstatus_id."'");
 	}
 
 	protected function getStoredTransactionStatus($txstatus_id) {
@@ -1171,13 +1230,7 @@ class PayoneModified {
 	}
 
 	protected function markTransactionStatusProcessed($txstatus_id, $applied = false) {
-		$processed = xtc_db_query("UPDATE payone_txstatus_data
-		                            SET `value` = '1'
-		                          WHERE payone_txstatus_id = '".(int)$txstatus_id."'
-		                            AND `key` = '_modified_processed'");
-		if ($processed === false) {
-			return false;
-		}
+		// the applied marker comes first, a status that is only half marked is repeated instead of lost
 		if ($applied === true) {
 			$applied_result = xtc_db_query("UPDATE payone_txstatus_data
 			                                SET `value` = '1'
@@ -1186,6 +1239,13 @@ class PayoneModified {
 			if ($applied_result === false) {
 				return false;
 			}
+		}
+		$processed = xtc_db_query("UPDATE payone_txstatus_data
+		                            SET `value` = '1'
+		                          WHERE payone_txstatus_id = '".(int)$txstatus_id."'
+		                            AND `key` = '_modified_processed'");
+		if ($processed === false) {
+			return false;
 		}
 		return true;
 	}
@@ -1276,40 +1336,59 @@ class PayoneModified {
 				$public_txstatus[$name] = $value;
 			}
 		}
-		if (xtc_db_query('START TRANSACTION') === false) {
-			return false;
-		}
-
 		$sql_data_transactions_array = array(
 			'status' => strtoupper($txaction),
 			'last_modified' => 'now()',
 		);
 		if (xtc_db_perform('payone_transactions', $sql_data_transactions_array, 'update', "orders_id='".$orders_id."' AND txid='".xtc_db_input($txid)."'") === false) {
-			xtc_db_query('ROLLBACK');
 			return false;
 		}
 
 		if (in_array($txaction, $this->getStatusNames(), true)) {
 			if (isset($config['orders_status'][$txaction]) && (int)$config['orders_status'][$txaction] > 0) {
-				$sql_data_orders_array = array(
-					'orders_status' => (int)$config['orders_status'][$txaction],
-					'last_modified' => 'now()',
-				);
-				if (xtc_db_perform(TABLE_ORDERS, $sql_data_orders_array, 'update', "orders_id='".$orders_id."'") === false) {
-					xtc_db_query('ROLLBACK');
+				$orders_status_id = (int)$config['orders_status'][$txaction];
+				// the condition keeps a repeated callback from moving a status that already matches
+				$update_query = xtc_db_query("UPDATE ".TABLE_ORDERS."
+				                                 SET orders_status = '".$orders_status_id."',
+				                                     last_modified = now()
+				                               WHERE orders_id = '".$orders_id."'
+				                                 AND orders_status != '".$orders_status_id."'");
+				if ($update_query === false) {
 					return false;
 				}
 
-				$sql_data_array = array(
-					'orders_id' => $orders_id,
-					'orders_status_id' => (int)$config['orders_status'][$txaction],
-					'date_added' => 'now()',
-					'customer_notified' => '0',
-					'comments' => STATUS_UPDATED_BY_PAYONE,
-					'comments_sent' => '0',
-				);
-				if (xtc_db_perform(TABLE_ORDERS_STATUS_HISTORY, $sql_data_array) === false) {
-					xtc_db_query('ROLLBACK');
+				// the comment names the status the entry belongs to, that is what a retry recognises
+				$history_comment = xtc_db_input(STATUS_UPDATED_BY_PAYONE.' (TxStatus '.(int)$txstatus_id.')');
+				// a status this callback moved just now earns its entry, a repeat only stays silent
+				// while its own entry is still the last word on the order
+				$duplicate_check = '';
+				if (xtc_db_affected_rows() < 1) {
+					$duplicate_check = " AND NOT EXISTS (SELECT 1
+					                                       FROM ".TABLE_ORDERS_STATUS_HISTORY." h
+					                                      WHERE h.orders_id = s.orders_id
+					                                        AND h.orders_status_id = '".$orders_status_id."'
+					                                        AND h.comments = '".$history_comment."'
+					                                        AND NOT EXISTS (SELECT 1
+					                                                          FROM ".TABLE_ORDERS_STATUS_HISTORY." h2
+					                                                         WHERE h2.orders_id = h.orders_id
+					                                                           AND h2.orders_status_history_id > h.orders_status_history_id))";
+				}
+				$history_query = xtc_db_query("INSERT INTO ".TABLE_ORDERS_STATUS_HISTORY." (orders_id,
+				                                                                            orders_status_id,
+				                                                                            date_added,
+				                                                                            customer_notified,
+				                                                                            comments,
+				                                                                            comments_sent)
+				                                    SELECT s.orders_id,
+				                                           '".$orders_status_id."',
+				                                           now(),
+				                                           '0',
+				                                           '".$history_comment."',
+				                                           '0'
+				                                      FROM payone_txstatus s
+				                                     WHERE s.payone_txstatus_id = '".(int)$txstatus_id."'"
+				                                     .$duplicate_check);
+				if ($history_query === false) {
 					return false;
 				}
 			}
@@ -1333,11 +1412,6 @@ class PayoneModified {
 		    || !$this->markTransactionStatusProcessed($txstatus_id, true)
 		    )
 		{
-			xtc_db_query('ROLLBACK');
-			return false;
-		}
-		if (xtc_db_query('COMMIT') === false) {
-			xtc_db_query('ROLLBACK');
 			return false;
 		}
 
