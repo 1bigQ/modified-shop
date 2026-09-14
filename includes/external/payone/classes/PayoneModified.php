@@ -1048,7 +1048,6 @@ class PayoneModified {
     } else {
       $this->log("sendTransactionStatus success");
     }
-    curl_close($curl);
   }
 
 	protected function getTransactionStatusCredential($txstatus, $config) {
