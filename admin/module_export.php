@@ -118,22 +118,35 @@
             }
           }
 
+          // resolve every value first, a module may reject the result before anything is written
+          $config_values = array();
           foreach ($configuration as $key => $value) {
             if (is_array($configuration[$key])) {
               // multi language config
               $keys = array_keys($configuration[$key]);
               if (gettype(array_shift($keys)) == 'string') {
-                $config_value = array();
-                foreach ($configuration[$key] as $k => $v) {
-                  if (xtc_not_null($v)) {
-                    $config_value[] =  $k . '::' . $v;
-                  }
-                }
-                $value = implode('||', $config_value);
+                require_once(DIR_FS_INC.'merge_multi_language_value.inc.php');
+                $stored_query = xtc_db_query("SELECT configuration_value
+                                                FROM " . TABLE_CONFIGURATION . "
+                                               WHERE configuration_key = '" . xtc_db_input($key) . "'");
+                $stored = xtc_db_fetch_array($stored_query);
+                $value = merge_multi_language_value($configuration[$key], (isset($stored['configuration_value']) ? $stored['configuration_value'] : ''));
               } else {
                 $value = implode(',', $configuration[$key]);
               }
             }
+            $config_values[$key] = $value;
+          }
+
+          if (method_exists($module, 'validate_configuration')) {
+            $configuration_error = $module->validate_configuration($config_values);
+            if (xtc_not_null($configuration_error)) {
+              $messageStack->add_session($configuration_error);
+              xtc_redirect(xtc_href_link(FILENAME_MODULE_EXPORT, 'set=' . $set . '&module=' . $module_class . '&action=edit'));
+            }
+          }
+
+          foreach ($config_values as $key => $value) {
             xtc_db_query("UPDATE " . TABLE_CONFIGURATION . "
                              SET configuration_value = '" . xtc_db_input($value) . "',
                                  last_modified = NOW()
