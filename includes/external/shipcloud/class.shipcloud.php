@@ -568,10 +568,20 @@ class shipcloud {
         
     $request = $this->do_request(json_encode($request_array), self::SC_URL_PICKUP);
         
-    if (is_array($request)) {
-    	for ($i = 0, $n=count($request['shipments']); $i<$n; $i++) {
-    		xtc_db_query("UPDATE ".TABLE_ORDERS_TRACKING." SET sc_date_pickup = NOW() WHERE sc_id = '".$request['shipments'][$i]['id']."'");
+    $response_error = (!is_array($request) || !isset($request['shipments']) || !is_array($request['shipments']));
+    if ($response_error === false) {
+    	foreach ($request['shipments'] as $shipment) {
+    		// a blank id would hit every tracking entry of other carriers, MySQL ignores trailing spaces
+    		if (isset($shipment['id']) && is_string($shipment['id']) && trim($shipment['id']) != '') {
+    			xtc_db_query("UPDATE ".TABLE_ORDERS_TRACKING." SET sc_date_pickup = NOW() WHERE sc_id = '".xtc_db_input($shipment['id'])."'");
+    		} else {
+    			$response_error = true;
+    		}
     	}
+    }
+    if ($response_error === true) {
+    	$messageStack->add_session(TEXT_PICKUP_ERROR, 'warning');
+    	$this->LoggingManager->log('WARNING', 'pickup', array('exception' => $request));
     }
   }
 

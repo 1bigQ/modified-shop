@@ -21,4 +21,6 @@ define('TEXT_SC_EARLIEST', 'earliest');
 define('TEXT_SC_LATEST', 'latest');
 
 define('BUTTON_PICKUP', 'Pickup request');
+
+define('TEXT_PICKUP_ERROR', 'The shipcloud pickup was not confirmed. Please check the pickup in your shipcloud account.');
 ?>
