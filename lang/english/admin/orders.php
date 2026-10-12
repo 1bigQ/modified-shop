@@ -159,6 +159,7 @@ define('TEXT_DELETE_SHIPMENT_SUCCESS', 'shipcloud Label deleted.');
 define('TEXT_DELETE_SHIPMENT_ERROR', 'shipcloud Label could not be deleted, the shipment has been kept. After the carrier\'s cutoff time a label can no longer be deleted.');
 define('TEXT_LABEL_CREATED', 'Label created.');
 define('TEXT_CARRIER_ERROR', 'Carrier not activated in your shipcloud account or invalid API key.');
+define('TEXT_LABEL_ERROR', 'The shipcloud label was not confirmed. Please check in your shipcloud account whether it was created before you create it again.');
 define('TEXT_CARRIER_PLACEHOLDER_1', 'Package description');
 define('TEXT_CARRIER_PLACEHOLDER_2', 'Shipment description');
 
