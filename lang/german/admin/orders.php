@@ -162,6 +162,7 @@ define('TEXT_CARRIER_ERROR', 'Paketdienstleister nicht in Ihrem shipcloud Accoun
 define('TEXT_LABEL_ERROR', 'Der shipcloud Paketschein wurde nicht best&auml;tigt. Bitte pr&uuml;fen Sie in Ihrem shipcloud Account, ob er erstellt wurde, bevor Sie ihn erneut anlegen.');
 define('TEXT_CARRIER_PLACEHOLDER_1', 'Paketbeschreibung');
 define('TEXT_CARRIER_PLACEHOLDER_2', 'Sendungsbeschreibung');
+define('TEXT_QUOTE_ERROR', 'shipcloud hat keinen g&uuml;ltigen Preis geliefert.');
 
 define('TEXT_DOWNLOADS', 'Downloads');
 define('TABLE_HEADING_FILENAME', 'Dateiname');
