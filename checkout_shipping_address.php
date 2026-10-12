@@ -26,6 +26,7 @@ require_once (DIR_FS_INC.'xtc_address_format.inc.php');
 require_once (DIR_FS_INC.'xtc_get_country_name.inc.php');
 require_once (DIR_FS_INC.'xtc_get_zone_code.inc.php');
 require_once (DIR_FS_INC.'secure_form.inc.php');
+require_once (DIR_FS_INC.'xtc_check_address_country.inc.php');
 
 $params = '';
 $link_checkout_shipping = FILENAME_CHECKOUT_SHIPPING;
@@ -86,7 +87,9 @@ if (isset ($_POST['action']) && ($_POST['action'] == 'submit')) {
     $check_address = xtc_db_fetch_array($check_address_query);
 
     if ($check_address['total'] == '1') {
-      if ($reset_shipping == true) {
+      $country_disabled = (xtc_check_address_country($_SESSION['sendto'], $_SESSION['customer_id']) === false);
+      // a rejected address falls back to the default one, so the quote of the previous destination must go as well
+      if ($reset_shipping == true || $country_disabled === true) {
         unset($_SESSION['shipping']);
         if (isset($_SESSION['paypal']['PayerID'])
             && $_SESSION['paypal']['PayerID'] != ''
@@ -95,7 +98,12 @@ if (isset ($_POST['action']) && ($_POST['action'] == 'submit')) {
           $_SESSION['shipping'] = '';
         }
       }
-      xtc_redirect(xtc_href_link($link_checkout_shipping, $params, 'SSL'));
+      if ($country_disabled === true) {
+        unset($_SESSION['sendto']);
+        $messageStack->add('checkout_address', ERROR_CHECKOUT_SHIPPING_COUNTRY_DISABLED);
+      } else {
+        xtc_redirect(xtc_href_link($link_checkout_shipping, $params, 'SSL'));
+      }
     } else {
       unset($_SESSION['sendto']);
     }
