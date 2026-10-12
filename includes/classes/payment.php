@@ -29,6 +29,7 @@
 
   // include needed functions
   require_once(DIR_FS_INC . 'xtc_count_payment_modules.inc.php');
+  require_once(DIR_FS_INC . 'get_lang_constant_from_file.inc.php');
 
   class payment {
 
@@ -634,18 +635,27 @@
       }
     
       if ($payment_method != '' && ($payment_method != 'no_payment' || defined('RUN_MODE_ADMIN'))) {
-        if (!isset($static_payment_array[$payment_method][(int)$order_id])) { 
+        if ($language == '') $language = (isset($_SESSION['language']) ? $_SESSION['language'] : '');
+        if (!isset($static_payment_array[$payment_method][$language][(int)$order_id])) {
           if (is_file(DIR_FS_CATALOG . 'includes/modules/payment/' . $payment_method . '.php')) {
-            if ($language == '') $language = $_SESSION['language'];
             $language_file = DIR_FS_CATALOG . 'lang/' . $language . '/modules/payment/' . $payment_method . '.php';
             // Klarna ships german and english only, an order in another language falls back to english
             if (strpos($payment_method, 'klarna') === 0 && !is_file($language_file)) {
               $language_file = DIR_FS_CATALOG . 'lang/english/modules/payment/' . $payment_method . '.php';
             }
-            include_once($language_file);
+            $title_constant = strtoupper('MODULE_PAYMENT_' . $payment_method . '_TEXT_TITLE');
+            // another language defined the module texts already, they cannot be redefined and are read from the file
+            $read_file = (defined($title_constant) && !in_array(realpath($language_file), get_included_files(), true));
+            if (!defined($title_constant)) {
+              include_once($language_file);
+            }
+            $title_text = (($read_file === true) ? get_lang_constant_from_file($language_file, $title_constant, array('klarna_code' => strtoupper($payment_method))) : false);
+            if ($title_text === false && defined($title_constant)) {
+              $title_text = constant($title_constant);
+            }
             // a language pack without the module texts must not fatal
-            $payment_name = ((defined(strtoupper('MODULE_PAYMENT_' . $payment_method . '_TEXT_TITLE')))
-              ? strip_tags(constant(strtoupper('MODULE_PAYMENT_' . $payment_method . '_TEXT_TITLE')))
+            $payment_name = (($title_text !== false)
+              ? strip_tags($title_text)
               : ((strpos($payment_method, 'klarna') === 0) ? 'Klarna' : $payment_method)
             );
 
@@ -654,7 +664,13 @@
               $paypal = new PayPalInfo($payment_method);
               $payment_array = $paypal->get_payment_data($order_id);
               if (count($payment_array) > 0 && $payment_array['payment_method'] == 'pay_upon_invoice') {
-                $payment_name = $payment_name . ' - ' . MODULE_PAYMENT_PAYPALPLUS_INVOICE;
+                $invoice_text = (($read_file === true) ? get_lang_constant_from_file($language_file, 'MODULE_PAYMENT_PAYPALPLUS_INVOICE') : false);
+                if ($invoice_text === false && defined('MODULE_PAYMENT_PAYPALPLUS_INVOICE')) {
+                  $invoice_text = MODULE_PAYMENT_PAYPALPLUS_INVOICE;
+                }
+                if ($invoice_text !== false) {
+                  $payment_name = $payment_name . ' - ' . $invoice_text;
+                }
               }
             }
           } elseif ($payment_method == 'no_payment') {
@@ -679,9 +695,9 @@
               }
             }
           }
-          $static_payment_array[$payment_method][(int)$order_id] = $payment_name;
+          $static_payment_array[$payment_method][$language][(int)$order_id] = $payment_name;
         }
-        return $static_payment_array[$payment_method][(int)$order_id];
+        return $static_payment_array[$payment_method][$language][(int)$order_id];
       } else {
         return false;
       }
