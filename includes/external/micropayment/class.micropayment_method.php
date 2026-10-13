@@ -6,7 +6,10 @@
  * @author     micropayment GmbH (TE) <support@micropayment.de>
  */
 require_once(dirname(__FILE__).'/class.micropayment_helper.php');
-include_once(dirname(__FILE__).'/../../../lang/'.$_SESSION['language'].'/modules/payment/mcp_service.php');
+// Preserve service constants already loaded by a payment language file
+if (!defined('MODULE_PAYMENT_MCP_SERVICE_TEXT_TITLE')) {
+  include_once(dirname(__FILE__).'/../../../lang/'.$_SESSION['language'].'/modules/payment/mcp_service.php');
+}
 
 class micropayment_method extends micropayment_helper
 {
@@ -20,7 +23,7 @@ class micropayment_method extends micropayment_helper
     var $_check;
 
     var $enabled = true;
-    var $version = '2.3.5';
+    var $version = '2.3.6';
     var $rslcode = 'r120';
     var $get_url_called = false;
 

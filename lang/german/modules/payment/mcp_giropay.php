@@ -5,7 +5,10 @@
  * @copyright  Copyright (c) 2022 Micropayment GmbH (http://www.micropayment.de)
  * @author     micropayment GmbH (TE) <support@micropayment.de>
  */
-include_once('mcp_service.php');
+// Preserve service constants already loaded by the callback
+if (!defined('MODULE_PAYMENT_MCP_SERVICE_TEXT_TITLE')) {
+  include_once(dirname(__FILE__).'/mcp_service.php');
+}
 define('MODULE_PAYMENT_MCP_GIROPAY_TEXT_DESCRIPTION', 'micropayment&trade; Giropay Modul
 <br /><br />
 Links<br />
