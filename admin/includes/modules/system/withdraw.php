@@ -21,13 +21,19 @@
     var $enabled;
     var $_check;
     var $version;
+    var $properties;
   
     function __construct() {
-      $this->version = '1.04';
+      $this->version = '1.05';
       $this->code = 'withdraw';
       $this->title = MODULE_WITHDRAW_TEXT_TITLE;
       $this->description = MODULE_WITHDRAW_TEXT_DESCRIPTION;
       $this->enabled = ((defined('MODULE_WITHDRAW_STATUS') && MODULE_WITHDRAW_STATUS == 'true') ? true : false);
+      $this->properties = array();
+
+      if (defined('RUN_MODE_ADMIN') && defined('MODULE_WITHDRAW_STATUS')) {
+        $this->properties['button_update'] = '<a class="button btnbox" onclick="this.blur();" href="'.xtc_href_link(FILENAME_MODULE_EXPORT, 'set=system&module='.$this->code.'&action=update').'">'.BUTTON_UPDATE.'</a>';
+      }
     }
     
     function process($file) {
@@ -78,6 +84,7 @@
       xtc_db_query("INSERT INTO " . TABLE_CONFIGURATION . " (configuration_key, configuration_value, configuration_group_id, sort_order, set_function, date_added) VALUES ('MODULE_WITHDRAW_STATUS', 'true',  '6', '1', 'xtc_cfg_select_option(array(\'true\', \'false\'), ', now())");  
       xtc_db_query("INSERT INTO " . TABLE_CONFIGURATION . " (configuration_key, configuration_value, configuration_group_id, sort_order, set_function, date_added) VALUES ('MODULE_WITHDRAW_CAPTCHA', 'false',  '6', '1', 'xtc_cfg_select_option(array(\'true\', \'false\'), ', now())");  
       xtc_db_query("INSERT INTO " . TABLE_CONFIGURATION . " (configuration_key, configuration_value, configuration_group_id, sort_order, set_function, use_function, date_added) VALUES ('MODULE_WITHDRAW_CONTENT', '".$content_group."',  '6', '1', 'xtc_cfg_select_content_module(', 'xtc_cfg_display_content', now())");
+      $this->update();
 
       // the content page ships hidden and only shows up in the footer boxes while the module is installed
       xtc_db_query("UPDATE ".TABLE_CONTENT_MANAGER."
@@ -170,6 +177,24 @@
       }
     }
     
+    function update() {
+      $check_query = xtc_db_query("SELECT configuration_id
+                                     FROM ".TABLE_CONFIGURATION."
+                                    WHERE configuration_key = 'MODULE_WITHDRAW_B2B_CUSTOMERS_STATUS'");
+      if (xtc_db_num_rows($check_query) < 1) {
+        xtc_db_perform(TABLE_CONFIGURATION, array(
+          'configuration_key' => 'MODULE_WITHDRAW_B2B_CUSTOMERS_STATUS',
+          'configuration_value' => '',
+          'configuration_group_id' => '6',
+          'sort_order' => '2',
+          'set_function' => 'xtc_cfg_multi_checkbox(array_diff_key(xtc_get_customers_statuses(true), array(0 => 0)), \'chr(44)\',',
+          'date_added' => 'now()',
+        ));
+      }
+
+      return '';
+    }
+
     function remove() {
       xtc_db_query("DELETE FROM " . TABLE_CONFIGURATION . " WHERE configuration_key LIKE 'MODULE_WITHDRAW_%'");
 
@@ -182,6 +207,7 @@
       // MODULE_WITHDRAW_CAPTCHA is deliberately absent, it stays a hidden setting
       $key = array(
         'MODULE_WITHDRAW_STATUS',
+        'MODULE_WITHDRAW_B2B_CUSTOMERS_STATUS',
         'MODULE_WITHDRAW_CONTENT',
       );
   
